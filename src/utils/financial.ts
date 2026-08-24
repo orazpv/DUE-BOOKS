@@ -37,7 +37,8 @@ export function getApplicableMembers(contribution: Contribution, members: Member
  * Outstanding balance: max(0, expected - paid)
  */
 export function calcOutstanding(expected: number, paid: number): number {
-  return Math.max(0, (expected || 0) - (paid || 0));
+  if (!Number.isFinite(expected) || !Number.isFinite(paid)) return 0;
+  return Math.max(0, expected - paid);
 }
 
 /**
@@ -80,8 +81,9 @@ export function calcContributionReceived(contributionId: string, payments: Payme
   return (payments || [])
     .filter((p) => p.status === 'confirmed')
     .reduce((sum, p) => {
-      const alloc = p.allocations?.find((a) => a.contributionId === contributionId);
-      return sum + (alloc ? alloc.amount : 0);
+      return sum + (p.allocations || [])
+        .filter((a) => a.contributionId === contributionId && Number.isFinite(a.amount))
+        .reduce((allocationSum, a) => allocationSum + a.amount, 0);
     }, 0);
 }
 
@@ -105,7 +107,9 @@ export function calcTotalCompulsoryAssigned(members: Member[]): number {
  * Total Expenses
  */
 export function calcTotalExpenses(expenses: Expense[]): number {
-  return (expenses || []).reduce((sum, e) => sum + (e.amount || 0), 0);
+  return (expenses || [])
+    .filter((e) => e.status !== 'voided')
+    .reduce((sum, e) => sum + (e.amount || 0), 0);
 }
 
 /**
@@ -124,8 +128,9 @@ export function getMemberContributionStatus(
   const paidForThis = (confirmedPayments || [])
     .filter((p) => p.memberId === member.id && p.status === 'confirmed')
     .reduce((sum, p) => {
-      const alloc = p.allocations?.find((a) => a.contributionId === contribution.id);
-      return sum + (alloc ? alloc.amount : 0);
+      return sum + (p.allocations || [])
+        .filter((a) => a.contributionId === contribution.id && Number.isFinite(a.amount))
+        .reduce((allocationSum, a) => allocationSum + a.amount, 0);
     }, 0);
 
   const outstanding = Math.max(0, expectedForThis - paidForThis);

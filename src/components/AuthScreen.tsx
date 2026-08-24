@@ -5,6 +5,8 @@ import {
   signInWithPopup,
   updateProfile,
   sendPasswordResetEmail,
+  sendEmailVerification,
+  signOut,
 } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
 import {
@@ -187,18 +189,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onDemoSignIn }) => {
 
       setLoading(true);
       try {
-        await signInWithEmailAndPassword(auth, cleanEmail, password);
+        const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        if (!credential.user.emailVerified) {
+          await sendEmailVerification(credential.user);
+          await signOut(auth);
+          setError('Please verify your email address before signing in. A new verification link has been sent.');
+          return;
+        }
       } catch (err: any) {
         console.warn('Firebase Auth sign in notice:', err);
-        if (
-          err.code === 'auth/operation-not-allowed' ||
-          err.code === 'auth/admin-restricted-operation'
-        ) {
-          if (onDemoSignIn) {
-            onDemoSignIn(cleanEmail, cleanEmail.split('@')[0]);
-            return;
-          }
-        }
         let friendlyMsg = err.message || 'Authentication failed. Please verify your details.';
         if (
           err.code === 'auth/invalid-credential' ||
@@ -236,8 +235,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onDemoSignIn }) => {
       return;
     }
 
-    // Send 6-digit verification code to email
-    sendVerificationCode();
+    setLoading(true);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+      await updateProfile(userCredential.user, { displayName: fullName.trim() });
+      await sendEmailVerification(userCredential.user);
+      await signOut(auth);
+      setResetMessage(`A secure verification link was sent to ${cleanEmail}. Verify the address, then sign in.`);
+      setIsSignUp(false);
+      setPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-in-use') {
+        setError('An account with this email address already exists. Please sign in instead.');
+      } else {
+        setError(err.message || 'Registration failed.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Step 2: Verify Code and Finalize Account Registration
@@ -268,16 +284,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onDemoSignIn }) => {
         }
       } catch (firebaseErr: any) {
         console.warn('Firebase Auth creation notice:', firebaseErr);
-        if (
-          firebaseErr.code === 'auth/operation-not-allowed' ||
-          firebaseErr.code === 'auth/admin-restricted-operation' ||
-          firebaseErr.code === 'auth/configuration-not-found'
-        ) {
-          if (onDemoSignIn) {
-            onDemoSignIn(cleanEmail, fullName.trim());
-            return;
-          }
-        }
         throw firebaseErr;
       }
     } catch (err: any) {

@@ -1,63 +1,101 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function membershipId(orgId) { return orgId + '_' + request.auth.uid; }
+    function membership(orgId) {
+      return get(/databases/$(database)/documents/org_memberships/$(membershipId(orgId)));
+    }
+    function activeMember(orgId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/org_memberships/$(membershipId(orgId)))
+        && membership(orgId).data.status == 'active'
+        && membership(orgId).data.userId == request.auth.uid;
+    }
+    function role(orgId, allowed) {
+      return activeMember(orgId) && membership(orgId).data.role in allowed;
     }
 
-    function isUserSelf(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    // User profile documents
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow read, create, update: if signedIn() && request.auth.uid == userId;
+      allow delete: if false;
     }
 
-    // Organizations
     match /organizations/{orgId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update, delete: if isAuthenticated();
+      allow create: if signedIn()
+        && request.resource.data.id == orgId
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow read: if activeMember(orgId);
+      allow update: if role(orgId, ['admin'])
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if role(orgId, ['admin']);
     }
 
-    // Organization Memberships (roles)
-    match /org_memberships/{membershipId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+    match /org_memberships/{id} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid || activeMember(resource.data.orgId)
+      );
+      allow create: if signedIn() && (
+        (request.resource.data.userId == request.auth.uid
+          && request.resource.data.id == request.resource.data.orgId + '_' + request.auth.uid
+          && get(/databases/$(database)/documents/organizations/$(request.resource.data.orgId)).data.ownerUid == request.auth.uid
+          && request.resource.data.role == 'admin')
+        || role(request.resource.data.orgId, ['admin'])
+      );
+      allow update: if role(resource.data.orgId, ['admin'])
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.userId == resource.data.userId;
+      allow delete: if role(resource.data.orgId, ['admin']);
     }
 
-    // Member records
-    match /members/{memberId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+    match /members/{id} {
+      allow read: if activeMember(resource.data.orgId);
+      allow create: if role(request.resource.data.orgId, ['admin', 'treasurer', 'financial_sec']);
+      allow update: if role(resource.data.orgId, ['admin', 'treasurer', 'financial_sec'])
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if role(resource.data.orgId, ['admin']);
     }
 
-    // Contributions / Dues / Levies
-    match /contributions/{contribId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+    match /contributions/{id} {
+      allow read: if activeMember(resource.data.orgId);
+      allow create: if role(request.resource.data.orgId, ['admin', 'treasurer', 'financial_sec']);
+      allow update: if role(resource.data.orgId, ['admin', 'treasurer', 'financial_sec'])
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if role(resource.data.orgId, ['admin']);
     }
 
-    // Payments & Receipts
-    match /payments/{paymentId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+    match /payments/{id} {
+      allow read: if activeMember(resource.data.orgId);
+      allow create: if role(request.resource.data.orgId, ['admin', 'treasurer', 'financial_sec'])
+        && request.resource.data.status == 'confirmed'
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0;
+      allow update: if role(resource.data.orgId, ['admin', 'treasurer'])
+        && request.resource.data.orgId == resource.data.orgId
+        && resource.data.status == 'confirmed'
+        && request.resource.data.status == 'reversed'
+        && request.resource.data.amount == resource.data.amount
+        && request.resource.data.receiptNumber == resource.data.receiptNumber
+        && request.resource.data.memberId == resource.data.memberId;
+      allow delete: if false;
     }
 
-    // Expenses / Vouchers
-    match /expenses/{expenseId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+    match /expenses/{id} {
+      allow read: if activeMember(resource.data.orgId);
+      allow create: if role(request.resource.data.orgId, ['admin', 'treasurer', 'financial_sec'])
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0;
+      allow update: if role(resource.data.orgId, ['admin', 'treasurer', 'financial_sec'])
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if false;
     }
 
-    // Audit Log Events
-    match /audit_events/{eventId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update, delete: if isAuthenticated();
+    match /audit_events/{id} {
+      allow read: if activeMember(resource.data.orgId);
+      allow create: if role(request.resource.data.orgId, ['admin', 'treasurer', 'financial_sec'])
+        && request.resource.data.actorEmail == request.auth.token.email;
+      allow update, delete: if false;
     }
   }
 }

@@ -28,6 +28,7 @@ import {
   INITIAL_AUDIT_EVENTS,
 } from '../data/initialData';
 import { calcOutstanding, isObligationApplicableToMember } from '../utils/financial';
+import { isValidIsoDate, normalizeWholeNaira } from '../utils/validation';
 import { auth, db } from '../lib/firebase';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import {
@@ -36,6 +37,8 @@ import {
   query,
   where,
   getDocs,
+  getDoc,
+  doc,
 } from 'firebase/firestore';
 import {
   saveUserDoc,
@@ -159,52 +162,23 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline'>('synced');
 
   // Active App User - null when signed out
-  const [currentUser, setCurrentUserState] = useState<User | null>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_user`);
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [currentUser, setCurrentUserState] = useState<User | null>(null);
 
   const [simulatedRole, setSimulatedRole] = useState<Role | null>(null);
 
-  const [organizations, setOrganizations] = useState<Organization[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_orgs`);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
 
   const [currentOrgId, setCurrentOrgIdState] = useState<string>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_currentOrgId`);
     return saved || '';
   });
 
-  const [memberships, setMemberships] = useState<OrgMembership[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_memberships`);
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [members, setMembers] = useState<Member[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_members`);
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [contributions, setContributions] = useState<Contribution[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_contributions`);
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [payments, setPayments] = useState<Payment[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_payments`);
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_expenses`);
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_audit`);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [memberships, setMemberships] = useState<OrgMembership[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [contributions, setContributions] = useState<Contribution[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
 
   // Local storage persistence
   useEffect(() => {
@@ -222,34 +196,6 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       localStorage.removeItem(`${STORAGE_KEY}_currentOrgId`);
     }
   }, [currentOrgId]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_orgs`, JSON.stringify(organizations));
-  }, [organizations]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_memberships`, JSON.stringify(memberships));
-  }, [memberships]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_members`, JSON.stringify(members));
-  }, [members]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_contributions`, JSON.stringify(contributions));
-  }, [contributions]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_payments`, JSON.stringify(payments));
-  }, [payments]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_expenses`, JSON.stringify(expenses));
-  }, [expenses]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_audit`, JSON.stringify(auditEvents));
-  }, [auditEvents]);
 
   // Auth State Listener
   useEffect(() => {
@@ -275,110 +221,55 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => unsubscribe();
   }, [currentOrgId]);
 
-  // Real-time Firestore Listeners
+  // Load only memberships tied to the authenticated Firebase UID.
   useEffect(() => {
     if (!firebaseUser) return;
     setSyncStatus('syncing');
-
-    // Subscribe to Organizations
-    const unsubOrgs = onSnapshot(collection(db, 'organizations'), (snapshot) => {
-      if (!snapshot.empty) {
-        const loaded: Organization[] = [];
-        snapshot.forEach((d) => {
-          loaded.push(d.data() as Organization);
-        });
-        setOrganizations((prev) => {
-          // Merge with any local ones not yet synced
-          const map = new Map<string, Organization>();
-          loaded.forEach((o) => map.set(o.id, o));
-          prev.forEach((o) => {
-            if (!map.has(o.id)) map.set(o.id, o);
-          });
-          return Array.from(map.values());
-        });
-      }
+    const ownMemberships = query(
+      collection(db, 'org_memberships'),
+      where('userId', '==', firebaseUser.uid),
+      where('status', '==', 'active')
+    );
+    return onSnapshot(ownMemberships, async (snapshot) => {
+      const loaded = snapshot.docs.map((d) => d.data() as OrgMembership);
+      setMemberships(loaded);
+      const orgDocs = await Promise.all(
+        loaded.map((m) => getDoc(doc(db, 'organizations', m.orgId)))
+      );
+      const accessible = orgDocs.filter((d) => d.exists()).map((d) => d.data() as Organization);
+      setOrganizations(accessible);
+      if (!currentOrgId && accessible[0]) setCurrentOrgIdState(accessible[0].id);
       setSyncStatus('synced');
     }, (err) => {
-      console.warn('Organizations listener:', err);
+      console.warn('Authorized memberships listener:', err);
       setSyncStatus('offline');
     });
-
-    // Subscribe to Org Memberships
-    const unsubMemberships = onSnapshot(collection(db, 'org_memberships'), (snapshot) => {
-      if (!snapshot.empty) {
-        const loaded: OrgMembership[] = [];
-        snapshot.forEach((d) => {
-          loaded.push(d.data() as OrgMembership);
-        });
-        setMemberships(loaded);
-      }
-    }, (err) => console.warn('Memberships listener:', err));
-
-    // Subscribe to Members
-    const unsubMembers = onSnapshot(collection(db, 'members'), (snapshot) => {
-      if (!snapshot.empty) {
-        const loaded: Member[] = [];
-        snapshot.forEach((d) => {
-          loaded.push(d.data() as Member);
-        });
-        setMembers(loaded);
-      }
-    }, (err) => console.warn('Members listener:', err));
-
-    // Subscribe to Contributions
-    const unsubContribs = onSnapshot(collection(db, 'contributions'), (snapshot) => {
-      if (!snapshot.empty) {
-        const loaded: Contribution[] = [];
-        snapshot.forEach((d) => {
-          loaded.push(d.data() as Contribution);
-        });
-        setContributions(loaded);
-      }
-    }, (err) => console.warn('Contributions listener:', err));
-
-    // Subscribe to Payments
-    const unsubPayments = onSnapshot(collection(db, 'payments'), (snapshot) => {
-      if (!snapshot.empty) {
-        const loaded: Payment[] = [];
-        snapshot.forEach((d) => {
-          loaded.push(d.data() as Payment);
-        });
-        setPayments(loaded);
-      }
-    }, (err) => console.warn('Payments listener:', err));
-
-    // Subscribe to Expenses
-    const unsubExpenses = onSnapshot(collection(db, 'expenses'), (snapshot) => {
-      if (!snapshot.empty) {
-        const loaded: Expense[] = [];
-        snapshot.forEach((d) => {
-          loaded.push(d.data() as Expense);
-        });
-        setExpenses(loaded);
-      }
-    }, (err) => console.warn('Expenses listener:', err));
-
-    // Subscribe to Audit Events
-    const unsubAudit = onSnapshot(collection(db, 'audit_events'), (snapshot) => {
-      if (!snapshot.empty) {
-        const loaded: AuditEvent[] = [];
-        snapshot.forEach((d) => {
-          loaded.push(d.data() as AuditEvent);
-        });
-        setAuditEvents(loaded.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-      }
-    }, (err) => console.warn('Audit listener:', err));
-
-    return () => {
-      unsubOrgs();
-      unsubMemberships();
-      unsubMembers();
-      unsubContribs();
-      unsubPayments();
-      unsubExpenses();
-      unsubAudit();
-    };
   }, [firebaseUser]);
+
+  // Operational listeners are always constrained to the selected authorized organization.
+  useEffect(() => {
+    if (!firebaseUser || !currentOrgId) return;
+    const ownMembership = memberships.find(
+      (m) => m.orgId === currentOrgId && m.userId === firebaseUser.uid && m.status === 'active'
+    );
+    if (!ownMembership) return;
+    const scoped = <T,>(name: string, setter: React.Dispatch<React.SetStateAction<T[]>>) =>
+      onSnapshot(query(collection(db, name), where('orgId', '==', currentOrgId)), (snapshot) => {
+        setter(snapshot.docs.map((d) => d.data() as T));
+      }, (err) => {
+        console.warn(`${name} listener:`, err);
+        setSyncStatus('offline');
+      });
+    const unsubs = [
+      scoped<OrgMembership>('org_memberships', setMemberships),
+      scoped<Member>('members', setMembers),
+      scoped<Contribution>('contributions', setContributions),
+      scoped<Payment>('payments', setPayments),
+      scoped<Expense>('expenses', setExpenses),
+      scoped<AuditEvent>('audit_events', setAuditEvents),
+    ];
+    return () => unsubs.forEach((unsubscribe) => unsubscribe());
+  }, [firebaseUser, currentOrgId, memberships.some((m) => m.orgId === currentOrgId && m.userId === firebaseUser?.uid)]);
 
   // Derived current org
   const currentOrg = useMemo(() => {
@@ -420,14 +311,14 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Determine current user's actual role in current organization
   const currentRole: Role = useMemo(() => {
-    if (!currentUser?.email) return 'admin';
+    if (!currentUser?.email || !firebaseUser) return 'viewer';
     const m = currentOrgMemberships.find(
-      (m) => m.userEmail.toLowerCase() === currentUser.email.toLowerCase()
+      (m) => m.userId === firebaseUser.uid && m.status === 'active'
     );
-    return m ? m.role : 'admin'; // fallback to admin if owner / creator
-  }, [currentOrgMemberships, currentUser?.email]);
+    return m ? m.role : 'viewer';
+  }, [currentOrgMemberships, currentUser?.email, firebaseUser]);
 
-  const effectiveRole: Role = simulatedRole || currentRole;
+  const effectiveRole: Role = currentRole;
   const canMutate =
     effectiveRole === 'admin' ||
     effectiveRole === 'treasurer' ||
@@ -444,10 +335,13 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Handled when org is created
   };
 
-  const logAudit = async (event: Omit<AuditEvent, 'id' | 'orgId' | 'actorEmail' | 'actorName' | 'actorRole' | 'timestamp'>) => {
+  const logAudit = async (
+    event: Omit<AuditEvent, 'id' | 'orgId' | 'actorEmail' | 'actorName' | 'actorRole' | 'timestamp'>,
+    targetOrgId: string = currentOrgId
+  ) => {
     const newEvent: AuditEvent = {
       id: `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      orgId: currentOrgId,
+      orgId: targetOrgId,
       actorEmail: currentUser?.email || 'system@duesbook.app',
       actorName: currentUser?.name || 'Officer',
       actorRole: effectiveRole,
@@ -526,7 +420,10 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     bankName?: string;
     accountNumber?: string;
   }): Organization => {
-    const newOrgId = `org_${Date.now()}`;
+    if (!firebaseUser || !currentUser) {
+      throw new Error('A verified Firebase account is required to create an organization.');
+    }
+    const newOrgId = `org_${crypto.randomUUID()}`;
     const code = data.code || data.name.substring(0, 4).toUpperCase();
     const userName = currentUser?.name || 'Administrator';
     const userEmail = currentUser?.email || 'admin@duesbook.app';
@@ -540,15 +437,14 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       currencySymbol: '₦',
       code: code,
       createdAt: new Date().toISOString(),
-      bankAccounts: [
-        {
-          id: `bank_${Date.now()}`,
-          bankName: data.bankName || 'First Bank of Nigeria',
-          accountNumber: data.accountNumber || '3001234567',
-          accountName: `${data.name} Main Account`,
-          initialBalance: 0,
-        },
-      ],
+      ownerUid: firebaseUser.uid,
+      bankAccounts: data.bankName && data.accountNumber ? [{
+        id: `bank_${crypto.randomUUID()}`,
+        bankName: data.bankName,
+        accountNumber: data.accountNumber,
+        accountName: `${data.name} Main Account`,
+        initialBalance: 0,
+      }] : [],
       custodians: [
         {
           id: `cust_${Date.now()}`,
@@ -560,9 +456,10 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     const newMembership: OrgMembership = {
-      id: `mship_${Date.now()}`,
+      id: `${newOrgId}_${firebaseUser.uid}`,
       orgId: newOrgId,
       userEmail: userEmail,
+      userId: firebaseUser.uid,
       userName: userName,
       role: 'admin',
       status: 'active',
@@ -574,18 +471,16 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setCurrentOrgIdState(newOrgId);
 
     // Save to Firestore
-    saveOrganizationDoc(newOrg);
-    saveMembershipDoc(newMembership);
-    if (currentUser) {
-      saveUserDoc(currentUser, newOrgId);
-    }
-
-    logAudit({
-      action: 'ORGANIZATION_CREATED',
-      entityType: 'organization',
-      entityId: newOrgId,
-      summary: `Organization "${newOrg.name}" initialized with Administrator ${userName}.`,
-    });
+    saveOrganizationDoc(newOrg)
+      .then(() => saveMembershipDoc(newMembership))
+      .then(() => saveUserDoc(currentUser, newOrgId))
+      .then(() => logAudit({
+        action: 'ORGANIZATION_CREATED',
+        entityType: 'organization',
+        entityId: newOrgId,
+        summary: `Organization "${newOrg.name}" initialized with Administrator ${userName}.`,
+      }, newOrgId))
+      .catch((err) => console.error('Organization initialization failed:', err));
 
     return newOrg;
   };
@@ -736,6 +631,7 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const addMember = (
     data: Omit<Member, 'id' | 'orgId' | 'expectedBalance' | 'paidBalance' | 'unallocatedCredit' | 'createdAt'>
   ): Member => {
+    if (!canMutate) throw new Error('You do not have permission to add members.');
     const activeObligations = currentOrgContributions.filter(
       (c) =>
         c.status === 'active' &&
@@ -845,11 +741,33 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   // 3. Contribution operations
+  const recalculateExpectedBalances = (nextContributions: Contribution[]) => {
+    setMembers((prev) => prev.map((member) => {
+      if (member.orgId !== currentOrgId) return member;
+      const expectedBalance = nextContributions
+        .filter((c) =>
+          c.orgId === currentOrgId &&
+          c.status === 'active' &&
+          c.type !== 'donation' &&
+          isObligationApplicableToMember(c, member)
+        )
+        .reduce((sum, c) => sum + c.amount, 0);
+      const next = { ...member, expectedBalance };
+      saveMemberDoc(next);
+      return next;
+    }));
+  };
+
   const addContribution = (
     data: Omit<Contribution, 'id' | 'orgId' | 'createdAt' | 'status'>
   ): Contribution => {
+    if (!canMutate) throw new Error('You do not have permission to create contributions.');
     const isDonation = data.type === 'donation';
-    const amount = isDonation ? 0 : Math.max(0, Math.round(data.amount));
+    const normalizedAmount = normalizeWholeNaira(data.amount);
+    if (!isDonation && normalizedAmount === null) {
+      throw new Error('Contribution amount must be a positive whole-naira value within the supported limit.');
+    }
+    const amount = isDonation ? Math.max(0, Math.round(Number.isFinite(data.amount) ? data.amount : 0)) : normalizedAmount!;
 
     const newContrib: Contribution = {
       ...data,
@@ -909,14 +827,24 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const updateContribution = (id: string, data: Partial<Contribution>) => {
     if (!canMutate) return;
     setContributions((prev) => {
-      const updated = prev.map((c) => (c.id === id ? { ...c, ...data } : c));
+      const updated = prev.map((c) => {
+        if (c.id !== id) return c;
+        const nextAmount = data.amount === undefined
+          ? c.amount
+          : (data.type || c.type) === 'donation'
+          ? Math.max(0, Math.round(data.amount))
+          : normalizeWholeNaira(data.amount);
+        if (nextAmount === null) throw new Error('Contribution amount is invalid.');
+        return { ...c, ...data, amount: nextAmount };
+      });
       const target = updated.find((c) => c.id === id);
       if (target) saveContributionDoc(target);
+      recalculateExpectedBalances(updated);
       return updated;
     });
 
     logAudit({
-      action: 'CONTRIBUTION_CREATED',
+      action: 'CONTRIBUTION_UPDATED',
       entityType: 'contribution',
       entityId: id,
       summary: `Updated contribution details for ${data.name || 'obligation'}.`,
@@ -951,25 +879,11 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         message: `"${contrib.name}" has payment allocations and was archived to preserve financial records.`,
       };
     } else {
-      if (contrib.type !== 'donation' && contrib.amount > 0) {
-        setMembers((prev) =>
-          prev.map((m) => {
-            if (
-              m.orgId === currentOrgId &&
-              m.status === 'active' &&
-              isObligationApplicableToMember(contrib, m)
-            ) {
-              const newExpected = Math.max(m.paidBalance, m.expectedBalance - contrib.amount);
-              const next = { ...m, expectedBalance: newExpected };
-              saveMemberDoc(next);
-              return next;
-            }
-            return m;
-          })
-        );
-      }
-
-      setContributions((prev) => prev.filter((c) => c.id !== id));
+      setContributions((prev) => {
+        const updated = prev.filter((c) => c.id !== id);
+        recalculateExpectedBalances(updated);
+        return updated;
+      });
       deleteContributionDoc(id);
 
       logAudit({
@@ -991,11 +905,12 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const updated = prev.map((c) => (c.id === id ? { ...c, status: 'active' as const } : c));
       const target = updated.find((c) => c.id === id);
       if (target) saveContributionDoc(target);
+      recalculateExpectedBalances(updated);
       return updated;
     });
 
     logAudit({
-      action: 'CONTRIBUTION_CREATED',
+      action: 'CONTRIBUTION_RESTORED',
       entityType: 'contribution',
       entityId: id,
       summary: `Restored archived contribution ID: ${id}.`,
@@ -1016,13 +931,51 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return { success: false, message: 'Viewers cannot record payments.' };
     }
 
-    const member = members.find((m) => m.id === data.memberId);
+    const member = currentOrgMembers.find((m) => m.id === data.memberId && m.status === 'active');
     if (!member) {
       return { success: false, message: 'Member not found.' };
     }
 
-    const wholeAmount = Math.max(1, Math.round(data.amount));
-    const totalAllocated = data.allocations.reduce((sum, a) => sum + (a.amount || 0), 0);
+    const wholeAmount = normalizeWholeNaira(data.amount);
+    if (wholeAmount === null) {
+      return { success: false, message: 'Payment must be a positive, finite whole-naira value within the supported limit.' };
+    }
+    if (!isValidIsoDate(data.paymentDate)) {
+      return { success: false, message: 'A valid payment date is required.' };
+    }
+    const seen = new Set<string>();
+    const validatedAllocations: PaymentAllocation[] = [];
+    for (const allocation of data.allocations) {
+      const amount = normalizeWholeNaira(allocation.amount);
+      const contribution = currentOrgContributions.find((c) => c.id === allocation.contributionId);
+      if (amount === null || !contribution || contribution.status !== 'active') {
+        return { success: false, message: 'One or more payment allocations are invalid or inactive.' };
+      }
+      if (seen.has(contribution.id)) {
+        return { success: false, message: 'A contribution can only be allocated once per payment.' };
+      }
+      if (contribution.type !== 'donation' && !isObligationApplicableToMember(contribution, member)) {
+        return { success: false, message: `${contribution.name} does not apply to this member.` };
+      }
+      if (contribution.type !== 'donation') {
+        const previouslyPaid = currentOrgPayments
+          .filter((p) => p.memberId === member.id && p.status === 'confirmed')
+          .flatMap((p) => p.allocations)
+          .filter((a) => a.contributionId === contribution.id)
+          .reduce((sum, a) => sum + a.amount, 0);
+        if (amount > Math.max(0, contribution.amount - previouslyPaid)) {
+          return { success: false, message: `Allocation to ${contribution.name} exceeds the outstanding obligation.` };
+        }
+      }
+      seen.add(contribution.id);
+      validatedAllocations.push({
+        contributionId: contribution.id,
+        contributionName: contribution.name,
+        contributionType: contribution.type,
+        amount,
+      });
+    }
+    const totalAllocated = validatedAllocations.reduce((sum, a) => sum + a.amount, 0);
 
     if (totalAllocated > wholeAmount) {
       return { success: false, message: 'Total allocations cannot exceed the payment amount.' };
@@ -1030,19 +983,21 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const unallocatedCredit = Math.max(0, wholeAmount - totalAllocated);
 
-    const appliedObligationsAmount = data.allocations
+    const appliedObligationsAmount = validatedAllocations
       .filter((a) => a.contributionType !== 'donation')
-      .reduce((sum, a) => sum + (a.amount || 0), 0);
+      .reduce((sum, a) => sum + a.amount, 0);
 
     const balanceBefore = calcOutstanding(member.expectedBalance, member.paidBalance);
     const balanceAfter = Math.max(0, balanceBefore - appliedObligationsAmount);
 
-    const receiptSeq = currentOrgPayments.length + 1;
     const dateObj = new Date(data.paymentDate || new Date());
     const yearStr = dateObj.getFullYear();
     const monthStr = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const seqStr = String(receiptSeq).padStart(4, '0');
-    const receiptNumber = `REC-${yearStr}-${monthStr}-${seqStr}`;
+    const prefix = (currentOrg?.branding?.receiptPrefix || 'REC-')
+      .replace(/[^A-Za-z0-9-]/g, '')
+      .slice(0, 12) || 'REC-';
+    const uniqueToken = crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
+    const receiptNumber = `${prefix}${yearStr}-${monthStr}-${uniqueToken}`;
 
     const newPayment: Payment = {
       id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -1060,7 +1015,7 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       referenceNote: data.referenceNote,
       channelDetails: data.channelDetails,
       status: 'confirmed',
-      allocations: data.allocations.filter((a) => a.amount > 0),
+      allocations: validatedAllocations,
       unallocatedCredit,
       balanceBefore,
       balanceAfter,
@@ -1071,7 +1026,7 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (m.id === member.id) {
           const next = {
             ...m,
-            paidBalance: m.paidBalance + appliedObligationsAmount,
+            paidBalance: Math.min(m.expectedBalance, m.paidBalance + appliedObligationsAmount),
             unallocatedCredit: m.unallocatedCredit + unallocatedCredit,
           };
           saveMemberDoc(next);
@@ -1179,14 +1134,18 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const addExpense = (
     data: Omit<Expense, 'id' | 'orgId' | 'createdAt' | 'recordedByEmail' | 'recordedByName'>
   ): Expense => {
+    if (!canMutate) throw new Error('You do not have permission to record expenses.');
+    const amount = normalizeWholeNaira(data.amount);
+    if (amount === null) throw new Error('Expense must be a positive, finite whole-naira value within the supported limit.');
     const newExpense: Expense = {
       ...data,
       id: `exp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       orgId: currentOrgId,
-      amount: Math.max(1, Math.round(data.amount)),
+      amount,
       recordedByEmail: currentUser.email,
       recordedByName: currentUser.name,
       createdAt: new Date().toISOString(),
+      status: 'active',
     };
 
     setExpenses((prev) => [newExpense, ...prev]);
@@ -1207,11 +1166,17 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!canMutate) return;
     const exp = expenses.find((e) => e.id === id);
     if (!exp) return;
-    setExpenses((prev) => prev.filter((e) => e.id !== id));
-    deleteExpenseDoc(id);
+    const voided = {
+      ...exp,
+      status: 'voided' as const,
+      voidedAt: new Date().toISOString(),
+      voidedByEmail: currentUser.email,
+    };
+    setExpenses((prev) => prev.map((e) => e.id === id ? voided : e));
+    saveExpenseDoc(voided);
 
     logAudit({
-      action: 'EXPENSE_RECORDED',
+      action: 'EXPENSE_VOIDED',
       entityType: 'expense',
       entityId: id,
       summary: `Removed expense entry: ₦${exp.amount.toLocaleString()} - ${exp.title}.`,
@@ -1246,7 +1211,7 @@ export const DuesBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       userEmail: emailClean,
       userName: data.userName.trim(),
       role: data.role,
-      status: 'active',
+      status: 'pending',
       addedAt: new Date().toISOString(),
     };
 

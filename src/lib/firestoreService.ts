@@ -52,7 +52,7 @@ export async function saveUserDoc(user: User, currentOrgId?: string) {
       updatedAt: new Date().toISOString(),
     }), { merge: true });
   } catch (err) {
-    console.warn('Firestore saveUserDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
@@ -62,7 +62,7 @@ export async function saveOrganizationDoc(org: Organization) {
     const orgRef = doc(db, 'organizations', org.id);
     await setDoc(orgRef, cleanForFirestore(org), { merge: true });
   } catch (err) {
-    console.warn('Firestore saveOrganizationDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
@@ -72,7 +72,7 @@ export async function saveMembershipDoc(mship: OrgMembership) {
     const mshipRef = doc(db, 'org_memberships', mship.id);
     await setDoc(mshipRef, cleanForFirestore(mship), { merge: true });
   } catch (err) {
-    console.warn('Firestore saveMembershipDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
@@ -91,7 +91,7 @@ export async function saveMemberDoc(member: Member) {
     const memberRef = doc(db, 'members', member.id);
     await setDoc(memberRef, cleanForFirestore(member), { merge: true });
   } catch (err) {
-    console.warn('Firestore saveMemberDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
@@ -110,7 +110,7 @@ export async function saveContributionDoc(contribution: Contribution) {
     const contribRef = doc(db, 'contributions', contribution.id);
     await setDoc(contribRef, cleanForFirestore(contribution), { merge: true });
   } catch (err) {
-    console.warn('Firestore saveContributionDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
@@ -129,7 +129,7 @@ export async function savePaymentDoc(payment: Payment) {
     const payRef = doc(db, 'payments', payment.id);
     await setDoc(payRef, cleanForFirestore(payment), { merge: true });
   } catch (err) {
-    console.warn('Firestore savePaymentDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
@@ -139,7 +139,7 @@ export async function saveExpenseDoc(expense: Expense) {
     const expRef = doc(db, 'expenses', expense.id);
     await setDoc(expRef, cleanForFirestore(expense), { merge: true });
   } catch (err) {
-    console.warn('Firestore saveExpenseDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
@@ -158,7 +158,7 @@ export async function saveAuditEventDoc(event: AuditEvent) {
     const audRef = doc(db, 'audit_events', event.id);
     await setDoc(audRef, cleanForFirestore(event), { merge: true });
   } catch (err) {
-    console.warn('Firestore saveAuditEventDoc warning:', err);
+    console.error('Firestore operation failed:', err); throw err;
   }
 }
 
