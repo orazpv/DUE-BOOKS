@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "esbuild tests/financial.test.ts --bundle --platform=node --format=esm --outfile=/tmp/dues-books-financial.test.mjs && node --test /tmp/dues-books-financial.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

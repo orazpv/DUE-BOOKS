@@ -52,6 +52,7 @@ export interface Organization {
   currencySymbol: string;
   code: string;
   createdAt: string;
+  ownerUid?: string;
   bankAccounts: BankAccount[];
   custodians: Custodian[];
   branding?: OrgBranding;
@@ -61,6 +62,7 @@ export interface OrgMembership {
   id: string;
   orgId: string;
   userEmail: string;
+  userId?: string;
   userName: string;
   role: Role;
   status: 'active' | 'pending';
@@ -171,6 +173,9 @@ export interface Expense {
   receiptRef?: string;
   description?: string;
   createdAt: string;
+  status?: 'active' | 'voided';
+  voidedAt?: string;
+  voidedByEmail?: string;
 }
 
 export interface AuditEvent {
@@ -189,11 +194,14 @@ export interface AuditEvent {
     | 'MEMBER_ARCHIVED'
     | 'MEMBER_DELETED'
     | 'CONTRIBUTION_CREATED'
+    | 'CONTRIBUTION_UPDATED'
+    | 'CONTRIBUTION_RESTORED'
     | 'CONTRIBUTION_ARCHIVED'
     | 'CONTRIBUTION_DELETED'
     | 'PAYMENT_RECORDED'
     | 'PAYMENT_REVERSED'
     | 'EXPENSE_RECORDED'
+    | 'EXPENSE_VOIDED'
     | 'OFFICER_ADDED'
     | 'OFFICER_UPDATED'
     | 'OFFICER_REMOVED';
