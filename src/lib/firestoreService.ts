@@ -13,6 +13,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { handleFirestoreError, OperationType } from './firestoreErrors';
 import {
   Organization,
   OrgMembership,
@@ -44,6 +45,7 @@ export function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
 
 // User Document
 export async function saveUserDoc(user: User, currentOrgId?: string) {
+  const path = `users/${user.id}`;
   try {
     const userRef = doc(db, 'users', user.id);
     await setDoc(userRef, cleanForFirestore({
@@ -52,113 +54,124 @@ export async function saveUserDoc(user: User, currentOrgId?: string) {
       updatedAt: new Date().toISOString(),
     }), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 // Organizations
 export async function saveOrganizationDoc(org: Organization) {
+  const path = `organizations/${org.id}`;
   try {
     const orgRef = doc(db, 'organizations', org.id);
     await setDoc(orgRef, cleanForFirestore(org), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 // Org Memberships
 export async function saveMembershipDoc(mship: OrgMembership) {
+  const path = `org_memberships/${mship.id}`;
   try {
     const mshipRef = doc(db, 'org_memberships', mship.id);
     await setDoc(mshipRef, cleanForFirestore(mship), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 export async function deleteMembershipDoc(membershipId: string) {
+  const path = `org_memberships/${membershipId}`;
   try {
     const mshipRef = doc(db, 'org_memberships', membershipId);
     await deleteDoc(mshipRef);
   } catch (err) {
-    console.warn('Firestore deleteMembershipDoc warning:', err);
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
 // Members
 export async function saveMemberDoc(member: Member) {
+  const path = `members/${member.id}`;
   try {
     const memberRef = doc(db, 'members', member.id);
     await setDoc(memberRef, cleanForFirestore(member), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 export async function deleteMemberDoc(memberId: string) {
+  const path = `members/${memberId}`;
   try {
     const memberRef = doc(db, 'members', memberId);
     await deleteDoc(memberRef);
   } catch (err) {
-    console.warn('Firestore deleteMemberDoc warning:', err);
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
 // Contributions / Dues
 export async function saveContributionDoc(contribution: Contribution) {
+  const path = `contributions/${contribution.id}`;
   try {
     const contribRef = doc(db, 'contributions', contribution.id);
     await setDoc(contribRef, cleanForFirestore(contribution), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 export async function deleteContributionDoc(contribId: string) {
+  const path = `contributions/${contribId}`;
   try {
     const contribRef = doc(db, 'contributions', contribId);
     await deleteDoc(contribRef);
   } catch (err) {
-    console.warn('Firestore deleteContributionDoc warning:', err);
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
 // Payments
 export async function savePaymentDoc(payment: Payment) {
+  const path = `payments/${payment.id}`;
   try {
     const payRef = doc(db, 'payments', payment.id);
     await setDoc(payRef, cleanForFirestore(payment), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 // Expenses
 export async function saveExpenseDoc(expense: Expense) {
+  const path = `expenses/${expense.id}`;
   try {
     const expRef = doc(db, 'expenses', expense.id);
     await setDoc(expRef, cleanForFirestore(expense), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 export async function deleteExpenseDoc(expenseId: string) {
+  const path = `expenses/${expenseId}`;
   try {
     const expRef = doc(db, 'expenses', expenseId);
     await deleteDoc(expRef);
   } catch (err) {
-    console.warn('Firestore deleteExpenseDoc warning:', err);
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
 // Audit Events
 export async function saveAuditEventDoc(event: AuditEvent) {
+  const path = `audit_events/${event.id}`;
   try {
     const audRef = doc(db, 'audit_events', event.id);
     await setDoc(audRef, cleanForFirestore(event), { merge: true });
   } catch (err) {
-    console.error('Firestore operation failed:', err); throw err;
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
